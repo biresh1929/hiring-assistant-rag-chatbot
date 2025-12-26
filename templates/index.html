@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TalentScout - Hiring Assistant</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <!-- GDPR Consent Banner -->
+    <div class="consent-banner" id="consentBanner">
+        <div class="consent-content">
+            <h3>🔒 Privacy & Data Protection</h3>
+            <p>By using this chatbot, you consent to us collecting your personal data for initial candidate screening. We encrypt all sensitive information and comply with GDPR regulations.</p>
+            <div class="consent-actions">
+                <a href="/privacy" target="_blank" class="privacy-link">Read Privacy Policy</a>
+                <button onclick="acceptConsent()" class="accept-btn">I Understand & Accept</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="container" id="mainContainer" style="display: none;">
+        <header>
+            <h1>🎯 TalentScout Hiring Assistant</h1>
+            <p>Initial Candidate Screening | <a href="/privacy" target="_blank" style="color: white; text-decoration: underline;">Privacy Policy</a></p>
+        </header>
+
+        <div class="chat-container" id="chatContainer">
+            <div class="chat-messages" id="chatMessages">
+                <!-- Messages will be added here dynamically -->
+            </div>
+        </div>
+
+        <div class="input-container">
+            <textarea 
+                id="userInput" 
+                placeholder="Type your response here..."
+                rows="3"
+            ></textarea>
+            <button id="sendButton" onclick="sendMessage()">Send</button>
+        </div>
+
+        <div class="status-bar">
+            <span id="statusIndicator">●</span>
+            <span id="statusText">Connecting...</span>
+        </div>
+    </div>
+
+    <script src="/static/js/script.js"></script>
+</body>
+</html>
