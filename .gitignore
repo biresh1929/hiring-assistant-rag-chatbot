@@ -1,0 +1,13 @@
+.env
+.venv
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+*.pyc
+*.pyo
+venv/
+data/
+!data/.gitkeep
+static/docs/
+hiring_assistant_chatbot.egg-info/
