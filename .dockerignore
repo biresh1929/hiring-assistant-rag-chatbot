@@ -1,0 +1,14 @@
+env
+.venv
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
+.vscode/
+*.pyc
+*.pyo
+venv/
+*.egg-info/
+.git
+.gitignore
+README.md
+data/
