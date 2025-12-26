@@ -1,5 +1,5 @@
 name: Deploy Application to EC2
-
+# push after setting up the runner and setting secrets
 on:
   push:
     branches: [main]
