@@ -1,0 +1,26 @@
+# Core LangChain packages - latest compatible versions
+langchain-community
+langchain-core
+langchain-groq
+langchain-huggingface
+langchain-pinecone
+pinecone-client
+# ML & AI
+sentence-transformers
+
+# Utilities
+python-dotenv
+cryptography
+
+APScheduler
+streamlit
+boto3
+pymongo
+
+pydantic
+pydantic-settings
+orjson
+requests
+
+
+-e .
