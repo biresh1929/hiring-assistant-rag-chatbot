@@ -11,3 +11,5 @@ data/
 !data/.gitkeep
 static/docs/
 hiring_assistant_chatbot.egg-info/
+venv/
+*.egg-info/
