@@ -383,13 +383,3 @@ If you want to extend this project:
 This project is open-source. Choose a license (MIT / Apache-2.0) and add `LICENSE` file if you plan to publish.
 
 ---
-
-## Final notes
-
-You have a strong project: it combines practical LLM usage with real-world operational and compliance concerns. The README above is designed to be both a user-facing document (how to run & use) and a technical one (why choices were made, how to extend). If you want, I can:
-
-* Generate a final `README.md` file ready to paste into your repo (I can produce exactly formatted Markdown now).
-* Produce a short demo script / Loom outline for your video.
-* Create a one-page slide (bullet points) for recruiters.
-
-Which one would you like next?
