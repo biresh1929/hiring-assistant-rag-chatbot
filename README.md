@@ -273,47 +273,25 @@ This pattern is general and LLM-agnostic.
 
 ---
 
-# Challenges & solutions (development notes)
+## Challenges & Design Decisions
 
-This section lists important real problems we encountered and how they were resolved — useful to include in your README or to talk about in interviews.
+* **Failure-resilient candidate identity:**
+  Timestamp-based IDs risked collisions and data loss under concurrent usage and network failures. Replaced with UUID-based candidate IDs generated immediately after user consent and used as the single source of truth across the system.
 
-### 1. **Encryption key handling**
+* **Secure encryption key lifecycle (GDPR-safe):**
+  Sensitive candidate data is encrypted using Fernet. Encryption keys are centrally managed via AWS Secrets Manager and injected at runtime. The application fails fast in production if the key is unavailable, preventing silent data corruption.
 
-* **Problem:** Initially, the app generated a new key silently if AWS Secrets Manager retrieval failed — which could make old data undecryptable.
-* **Solution:** Implemented `APP_ENV` gating:
+* **GDPR compliance by design:**
+  Implemented candidate-level data access, JSON export, immediate deletion (“right to erasure”), retention controls, and audit logging to support GDPR Articles 5, 15, 17, 20, and 32.
 
-  * `development` → allow key generation (dev convenience).
-  * `production` → fail loudly and abort startup to avoid silent key rotation and irreversible data loss.
+* **Vector DB risk assessment:**
+  Initially evaluated Pinecone for semantic retrieval, but removed it in the current version to avoid storing PII in vector databases and simplify GDPR compliance. MongoDB remains the single source of truth.
 
-### 2. **Datetime serialization for export**
+* **Prompt orchestration:**
+  Replaced a monolithic prompt with a multi-stage prompt pipeline (consent, info collection, question generation, evaluation, fallback, termination) to enforce deterministic interview flow.
 
-* **Problem:** `json.dumps()` failed with `datetime` objects when exporting candidate data.
-* **Solution:** Convert DB datetimes to ISO-8601 strings (`.isoformat()`) before return, or use `json.dumps(..., default=str)` as a fallback.
-
-### 3. **Encrypted-field indexing**
-
-* **Problem:** Attempting to index encrypted `email` produced a useless index because ciphertext is non-deterministic.
-* **Solution:** Remove index on encrypted email. If email lookups are required, store an indexed deterministic hash (SHA-256 of normalized email) in a separate field.
-
-### 4. **Pinecone / Vector DB GDPR risk**
-
-* **Problem:** Storing raw conversation text (PII) in a vector DB makes deletion & compliance complex.
-* **Solution:** Removed Pinecone writes by default. If re-enabled in V2, store only sanitized summaries or enable per-candidate deletion and redaction pipelines.
-
-### 5. **Duplicate candidate inserts**
-
-* **Problem:** `insert_one` could raise `DuplicateKeyError` if candidate_id is reused.
-* **Solution:** Either ensure candidate_id uniqueness per session or use `update_one(..., upsert=True)` when resaving/resuming.
-
-### 6. **Off-topic / rubbish input handling**
-
-* **Problem:** Users sometimes type irrelevant text (jokes, queries) that derail stage flow.
-* **Solution:** Add lightweight stage-aware redirection: detect off-topic patterns and politely prompt the candidate to continue the current step.
-
-### 7. **Auditability**
-
-* **Problem:** Need a reliable audit trail for GDPR actions (access, export, deletion).
-* **Solution:** Implemented `audit_log` collection and log every action originating from the MongoDB handler.
+* **Encrypted field indexing:**
+  Avoided indexing encrypted fields. Where lookup is required, deterministic hashes are stored in separate indexed fields.
 
 ---
 
@@ -366,16 +344,6 @@ If you want to extend this project:
 * **Add sentiment/multilingual features:** use a lightweight classifier only if privacy-aware.
 * **Reintroduce Vector DB:** do so only if you implement redaction and deletion hooks.
 * **Unit tests:** add tests for `MongoDBHandler` (mock Mongo), `export_candidate_data`, and prompt parsing.
-
----
-
-# Resume / presentation bullets (copy-paste)
-
-* Designed and implemented `TalentScout` — an LLM-powered hiring assistant with Streamlit UI.
-* Implemented GDPR-compliant encrypted storage (Fernet), key management (ENV + AWS Secrets), and audit logging in MongoDB.
-* Engineered adaptive question generation (difficulty buckets based on years of experience) using prompt templates and LLMs.
-* Built secure data operations: data access, export, permanent deletion, and automated retention cleanup.
-
 ---
 
 # License & credits
