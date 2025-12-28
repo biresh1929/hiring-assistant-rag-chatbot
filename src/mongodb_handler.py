@@ -181,7 +181,12 @@ class MongoDBHandler:
                 "consent_timestamp": datetime.now()
             }
 
-            self.candidates_collection.insert_one(encrypted_doc)
+            self.candidates_collection.update_one(
+                {"candidate_id": candidate_id},
+                {"$set": encrypted_doc},
+                upsert=True
+            )
+
             self._log_audit_event("DATA_CREATED", candidate_id, "Candidate data saved")
 
             logging.info(f"✅ Candidate saved to MongoDB: {candidate_id}")
@@ -328,5 +333,51 @@ class MongoDBHandler:
 
         except Exception as e:
             logging.error(f"❌ Failed to retrieve audit log: {e}")
+            return []
+        
+    
+    def store_conversation_message(self, candidate_id: str, role: str, message: str, stage: str):
+        """Store a single conversation message in MongoDB for chronological history"""
+        try:
+            self.candidates_collection.update_one(
+                {"candidate_id": candidate_id},
+                {
+                    "$push": {
+                        "conversation_history": {
+                            "role": role,
+                            "message": message,
+                            "stage": stage,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                },
+                upsert=True
+            )
+            logging.info(f"✅ Stored conversation message for {candidate_id}")
+        except Exception as e:
+            logging.error(f"❌ Failed to store conversation message: {e}")
+
+    def get_conversation_history(self, candidate_id: str, limit: int = 10):
+        """Retrieve conversation history from MongoDB in chronological order"""
+        try:
+            doc = self.candidates_collection.find_one(
+                {"candidate_id": candidate_id},
+                {"conversation_history": 1, "_id": 0}
+            )
+            
+            if doc and "conversation_history" in doc:
+                history = doc["conversation_history"]
+                
+                # Return last N messages in chronological order
+                recent_history = history[-limit:] if len(history) > limit else history
+                
+                logging.info(f"✅ Retrieved {len(recent_history)} messages for {candidate_id}")
+                return recent_history
+            else:
+                logging.info(f"ℹ️ No conversation history found for {candidate_id}")
+                return []
+                
+        except Exception as e:
+            logging.error(f"❌ Failed to retrieve conversation history: {e}")
             return []
 

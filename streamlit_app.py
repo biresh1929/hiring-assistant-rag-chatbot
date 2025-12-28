@@ -1,3 +1,4 @@
+import logging
 import streamlit as st
 from src.helper import (
     ConversationStage,
@@ -11,6 +12,13 @@ from src.context_manager import ConversationContextManager
 from src.mongodb_handler import MongoDBHandler
 from datetime import datetime
 import uuid
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
 
 st.markdown("""
 <style>
@@ -46,11 +54,16 @@ if 'data_handler' not in st.session_state:
 
 # Initialize in session state
 if 'context_manager' not in st.session_state:
-    st.session_state.context_manager = ConversationContextManager()
+    try:
+        st.session_state.context_manager = ConversationContextManager()
+    except Exception as e:
+        st.error(f"⚠️ Pinecone initialization failed: {e}")
+        st.info("The bot will work without context awareness.")
+        st.session_state.context_manager = None  # Allow bot to run without Pinecone
 
 # When adding messages, also store in Pinecone
 def add_message(role, content):
-    """Add message to chat history and Pinecone"""
+    """Add message to chat history, MongoDB, and Pinecone"""
     message = {
         "role": role,
         "content": content,
@@ -58,19 +71,87 @@ def add_message(role, content):
     }
     st.session_state.messages.append(message)
     
-    # Store in Pinecone
+    # Store in MongoDB for chronological history (PRIMARY SOURCE for resume)
     if st.session_state.candidate_id:
-        st.session_state.context_manager.store_conversation_turn(
-            candidate_id=st.session_state.candidate_id,
-            role=role,
-            message=content,
-            metadata={"stage": st.session_state.stage}
-        )
+        try:
+            st.session_state.data_handler.store_conversation_message(
+                candidate_id=st.session_state.candidate_id,
+                role=role,
+                message=content,
+                stage=st.session_state.stage
+            )
+        except Exception as e:
+            logger.warning(f"Failed to store in MongoDB: {e}")
     
-    # Keep last 5 for immediate context
+    # Store in Pinecone for semantic search (for context Q&A)
+    if st.session_state.candidate_id and st.session_state.context_manager:
+        try:
+            st.session_state.context_manager.store_conversation_turn(
+                candidate_id=st.session_state.candidate_id,
+                role=role,
+                message=content,
+                metadata={"stage": st.session_state.stage}
+            )
+        except Exception as e:
+            logger.warning(f"Failed to store in Pinecone: {e}")
+            # Continue - don't break the conversation
+    
+    # Keep last 5 for immediate context (fallback if both fail)
     st.session_state.conversation_context.append(f"{role}: {content}")
     if len(st.session_state.conversation_context) > 5:
         st.session_state.conversation_context.pop(0)
+
+def handle_context_question(user_input):
+    """Handle questions about previous conversation using Pinecone"""
+    
+    # Pattern matching for context questions
+    context_patterns = [
+        "what did i say",
+        "what was my",
+        "did i mention",
+        "what's my",
+        "remind me",
+        "what did you ask",
+        "what position",
+        "what email",
+        "what tech",
+        "my experience"
+    ]
+    
+    # Check if user is asking about past conversation
+    is_context_question = any(pattern in user_input.lower() for pattern in context_patterns)
+    
+    if not is_context_question:
+        return None
+    
+    # Must have context manager and candidate ID
+    if not st.session_state.context_manager or not st.session_state.candidate_id:
+        return None
+    
+    try:
+        # Get relevant context from Pinecone
+        relevant_context = st.session_state.context_manager.get_relevant_context(
+            candidate_id=st.session_state.candidate_id,
+            query=user_input,
+            k=3  # Get top 3 most relevant messages
+        )
+        
+        if relevant_context:
+            # Format the response
+            context_text = "\n".join([
+                f"- {ctx['content']}" 
+                for ctx in relevant_context
+            ])
+            
+            return f"Based on our conversation:\n\n{context_text}\n\nIs there anything you'd like to update?"
+        else:
+            return "I don't have that information yet. We haven't discussed that topic."
+            
+    except Exception as e:
+        logger.error(f"Context retrieval error: {e}")
+        return None
+    
+
 
 # Page configuration
 st.set_page_config(
@@ -134,6 +215,7 @@ st.markdown("""
 if 'initialized' not in st.session_state:
     st.session_state.initialized = False
     st.session_state.consent_given = False
+    st.session_state.pending_resume = False
     st.session_state.stage = ConversationStage.GREETING
     st.session_state.messages = []
     st.session_state.candidate_data = {
@@ -185,12 +267,35 @@ def get_next_stage():
     if current_index < len(stage_flow) - 1:
         st.session_state.stage = stage_flow[current_index + 1]
 
+
+def detect_update_intent(user_input: str):
+    patterns = {
+        "full_name": ["change my name", "update my name", "my name is", "call me"],
+        "email": ["change my email", "update my email"],
+        "phone": ["change my phone", "update my phone"],
+        "current_location": ["change my location"],
+        "desired_position": ["change my position"]
+
+    }
+
+    text = user_input.lower()
+    for field, triggers in patterns.items():
+        if any(t in text for t in triggers):
+            return field
+    return None
+
 def process_user_input(user_input):
     """Process user input with context awareness"""
     
     # Add user message
     add_message("user", user_input)
     
+    # 🔥 NEW: Check if user is asking about previous conversation
+    context_response = handle_context_question(user_input)
+    if context_response:
+        add_message("assistant", context_response)
+        return  # Don't process as normal input
+
     # Check for exit intent
     if check_exit_intent(user_input):
         goodbye_msg = generate_goodbye(
@@ -210,6 +315,28 @@ def process_user_input(user_input):
         st.session_state.conversation_ended = True
         return
     
+    update_field = detect_update_intent(user_input)
+
+    if update_field:
+        new_value = user_input.split()[-1]  # simple heuristic
+
+        # Update in-memory state
+        st.session_state.candidate_data[update_field] = new_value
+
+        # 🔥 PERSIST UPDATE (CRITICAL)
+        st.session_state.data_handler.save_candidate_data(
+            st.session_state.candidate_id,
+            st.session_state.candidate_data
+        )
+
+        add_message(
+            "assistant",
+            f"✅ I've updated your {update_field.replace('_', ' ')} to **{new_value}**."
+        )
+        return
+
+
+
     stage = st.session_state.stage
     
     # COLLECTING_NAME
@@ -368,6 +495,9 @@ def process_user_input(user_input):
         response = handle_fallback(user_input, stage)
         add_message("assistant", response)
 
+
+
+
 # Main App
 def main():
     # Header
@@ -417,7 +547,9 @@ def main():
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
-    
+
+
+
     # GDPR Consent
     if not st.session_state.consent_given:
         st.markdown("""
@@ -439,23 +571,88 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ I Understand and Accept", key="accept_consent"):
-
                 st.session_state.candidate_id = f"candidate_{uuid.uuid4().hex}"
                 st.session_state.consent_given = True
                 st.session_state.initialized = True
                 
-                # Generate greeting
-                greeting = generate_greeting()
-                add_message("assistant", greeting)
-                add_message("assistant", "Let's start with your full name. What should I call you?")
-                get_next_stage()
+                # 🔥 Check for previous conversation - SET FLAG, don't show buttons yet
+                if st.session_state.context_manager:
+                    try:
+                        history = st.session_state.context_manager.get_conversation_history(
+                            candidate_id=st.session_state.candidate_id,
+                            limit=5
+                        )
+                        
+                        if history and len(history) > 2:
+                            # Store history in session state for next render
+                            st.session_state.pending_resume = True
+                            st.session_state.resume_history = history
+                        else:
+                            # No history - start fresh
+                            st.session_state.pending_resume = False
+                            
+                    except Exception as e:
+                        logger.warning(f"Could not check conversation history: {e}")
+                        st.session_state.pending_resume = False
+                else:
+                    st.session_state.pending_resume = False
+                
+                # If no pending resume, start greeting immediately
+                if not st.session_state.get('pending_resume', False):
+                    greeting = generate_greeting()
+                    add_message("assistant", greeting)
+                    add_message("assistant", "Let's start with your full name. What should I call you?")
+                    get_next_stage()
+                
                 st.rerun()
         
         with col2:
             if st.button("❌ Decline"):
                 st.error("You must accept the privacy policy to use this service.")
                 st.stop()
-    
+
+    # 🔥 NEW: Handle resume conversation decision (AFTER consent given)
+    elif st.session_state.get('pending_resume', False):
+        st.info("🔄 **Previous Conversation Detected**")
+        st.markdown("Would you like to continue where you left off?")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("📋 Resume Previous Conversation", key="resume_conv"):
+                # Load previous messages
+                history = st.session_state.resume_history
+                for ctx in reversed(history):
+                    content = ctx["content"].split(": ", 1)[1] if ": " in ctx["content"] else ctx["content"]
+                    st.session_state.messages.append({
+                        "role": ctx["metadata"].get("role", "assistant"),
+                        "content": content,
+                        "timestamp": ctx["metadata"].get("timestamp")
+                    })
+                
+                # Set stage based on last message
+                st.session_state.stage = history[0]["metadata"].get("stage", ConversationStage.GREETING)
+                
+                # Clear resume flag
+                st.session_state.pending_resume = False
+                del st.session_state.resume_history
+                
+                st.success("✅ Previous conversation loaded!")
+                st.rerun()
+        
+        with col2:
+            if st.button("🆕 Start Fresh", key="start_fresh"):
+                # Clear resume flag and start greeting
+                st.session_state.pending_resume = False
+                if 'resume_history' in st.session_state:
+                    del st.session_state.resume_history
+                
+                greeting = generate_greeting()
+                add_message("assistant", greeting)
+                add_message("assistant", "Let's start with your full name. What should I call you?")
+                get_next_stage()
+                st.rerun()
+        
     else:
         # Display conversation
         display_messages()
